@@ -11,10 +11,76 @@
       Video:
       <select id="camera"></select>
     </div>
+    <p>
+      <button id="takeProfilePicture" type="button" autofocus="true">
+        Create Profile Picture
+      </button>
+    </p>
     <video id="videoTag" autoplay></video>
+    <canvas id="profilePicCanvas" style="display: none;"> </canvas>
+    <div>
+      <img id="profilePictureOutput" />
+    </div>
+
     <script>
       const videoArea = document.querySelector("video");
       const videoSelect = document.querySelector("#camera");
+      const profilePicCanvas = document.querySelector("#profilePicCanvas");
+      const profilePictureOutput = document.querySelector(
+        "#profilePictureOutput"
+      );
+      const takePicButton = document.querySelector("#takeProfilePicture");
+      const videoTag = document.querySelector("#videoTag");
+
+      const width = 240; //Desired width of the profile picture
+      let height = 0; //Calculated later based on image ratio;
+      let streaming = false; //Used to determine when the video has loaded
+
+      takePicButton.addEventListener(
+        "click",
+        ev => {
+          takeProfilePic();
+          ev.preventDefault();
+        },
+        false
+      );
+
+      videoTag.addEventListener(
+        "canplay",
+        ev => {
+          if (!streaming) {
+            height = videoTag.videoHeight / (videoTag.videoWidth / width);
+
+            // Firefox currently has a bug here the height can't be read from
+            // the video, so we will make assumptions if this happnes
+
+            if (isNaN(height)) {
+              height = width / (4 / 3);
+            }
+
+            videoTag.setAttribute("width", width);
+            videoTag.setAttribute("height", height);
+            profilePicCanvas.setAttribute("width", width);
+            profilePicCanvas.setAttribute("height", height);
+            streaming = true;
+          }
+        },
+        false
+      );
+
+      function takeProfilePic() {
+        const context = profilePicCanvas.getContext("2d");
+        if (width && height) {
+          profilePicCanvas.width = width;
+          profilePicCanvas.height = height;
+
+          context.drawImage(videoTag, 0, 0, width, height);
+
+          const data = profilePicCanvas.toDataURL("image/png");
+          debugger;
+          profilePictureOutput.setAttribute("src", data);
+        }
+      }
 
       navigator.mediaDevices.enumerateDevices().then(getCameras);
       videoSelect.onchange = startStream;
@@ -46,10 +112,10 @@
           audio: false,
           video: {
             mandatory: {
-              maxWidth: 640,
-              maxHeight: 640,
-              minWidth: 360,
-              maxHeight: 480
+              maxWidth: 240,
+              maxHeight: 240,
+              minWidth: 240,
+              maxHeight: 240
             },
             optional: [
               {
