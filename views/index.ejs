@@ -5,138 +5,167 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>O'Reilly Introduction to WebRTC</title>
     <link rel="stylesheet" type="text/css" href="styles.css" />
+    <script src="/socket.io/socket.io.js"></script>
   </head>
   <body>
+    <video id="myVideoTag" autoplay></video>
+    <video id="theirVideoTag" autoplay></video>
     <div>
-      Video:
-      <select id="camera"></select>
-    </div>
-    <p>
-      <button id="takeProfilePicture" type="button" autofocus="true">
-        Create Profile Picture
-      </button>
-    </p>
-    <video id="videoTag" autoplay></video>
-    <canvas id="profilePicCanvas" style="display: none;"> </canvas>
-    <div>
-      <img id="profilePictureOutput" />
+      <label>Your name</label><input id="myName" type="text" />
+      <label>Message</label><input id="myMessage" type="text" />
+      <input id="sendMessage" type="submit" />
+      <div id="chatArea">Message Output:<br /></div>
+      <div id="signalingArea">Signaling Messages: <br /></div>
     </div>
 
     <script>
-      const videoArea = document.querySelector("video");
-      const videoSelect = document.querySelector("#camera");
-      const profilePicCanvas = document.querySelector("#profilePicCanvas");
-      const profilePictureOutput = document.querySelector(
-        "#profilePictureOutput"
-      );
-      const takePicButton = document.querySelector("#takeProfilePicture");
-      const videoTag = document.querySelector("#videoTag");
-
-      const width = 240; //Desired width of the profile picture
-      let height = 0; //Calculated later based on image ratio;
-      let streaming = false; //Used to determine when the video has loaded
-
-      takePicButton.addEventListener(
-        "click",
-        ev => {
-          takeProfilePic();
-          ev.preventDefault();
-        },
-        false
-      );
-
-      videoTag.addEventListener(
-        "canplay",
-        ev => {
-          if (!streaming) {
-            height = videoTag.videoHeight / (videoTag.videoWidth / width);
-
-            // Firefox currently has a bug here the height can't be read from
-            // the video, so we will make assumptions if this happnes
-
-            if (isNaN(height)) {
-              height = width / (4 / 3);
-            }
-
-            videoTag.setAttribute("width", width);
-            videoTag.setAttribute("height", height);
-            profilePicCanvas.setAttribute("width", width);
-            profilePicCanvas.setAttribute("height", height);
-            streaming = true;
+      const myVideoArea = document.querySelector("#myVideoTag");
+      const theirVideoArea = document.querySelector("#theirVideoTag");
+      const myName = document.querySelector("#myName");
+      const myMessage = document.querySelector("#myMessage");
+      const sendMessage = document.querySelector("#sendMessage");
+      const chatArea = document.querySelector("#chatArea");
+      const signalingArea = document.querySelector("#signalingArea");
+      const ROOM = "chat";
+      const SIGNAL_ROOM = "signal_room";
+      const configuration = {
+        iceServers: [
+          {
+            url: "stun:stun.l.google.19302"
           }
-        },
-        false
-      );
+        ]
+      };
+      let rtcPeerConn;
 
-      function takeProfilePic() {
-        const context = profilePicCanvas.getContext("2d");
-        if (width && height) {
-          profilePicCanvas.width = width;
-          profilePicCanvas.height = height;
+      socket = io();
+      socket.emit("ready", {
+        chat_room: ROOM,
+        signal_room: SIGNAL_ROOM
+      });
 
-          context.drawImage(videoTag, 0, 0, width, height);
+      // Send a first signaling message to anyone listening
+      // This normally would be on a button click
+      socket.emit("signal", {
+        type: "user_here",
+        message: "Are you ready for a call?",
+        room: SIGNAL_ROOM
+      });
 
-          const data = profilePicCanvas.toDataURL("image/png");
-          debugger;
-          profilePictureOutput.setAttribute("src", data);
-        }
-      }
+      socket.on("signaling_message", data => {
+        displaySignalMessage("Signal received: " + data.type);
 
-      navigator.mediaDevices.enumerateDevices().then(getCameras);
-      videoSelect.onchange = startStream;
-      startStream();
+        //Setup the RTC Peer Connection object
+        if (!rtcPeerConn) startSignaling();
 
-      function getCameras(sourceInfos) {
-        debugger;
-        for (let i = 0; i !== sourceInfos.length; ++i) {
-          const sourceInfo = sourceInfos[i];
-          const option = document.createElement("option");
-          option.value = sourceInfo.deviceId;
-
-          if (sourceInfo.kind === "video" || sourceInfo.kind === "videoinput") {
-            option.text =
-              sourceInfo.label || "camera " + (videoSelect.length + 1);
-            // alert(sourceInfo.deviceId);
-            videoSelect.appendChild(option);
+        if (data.type !== "user_here") {
+          const message = JSON.parse(data.message);
+          if (message.sdp) {
+            rtcPeerConn.setRemoteDescription(
+              new RTCSessionDescription(message.sdp),
+              () => {
+                //if we received an offer, we need to answer
+                if (rtcPeerConn.remoteDescription.type === "offer")
+                  rtcPeerConn.createAnswer(sendLocalDesc, logError);
+              },
+              logError
+            );
+          } else {
+            rtcPeerConn.addIceCandidate(new RTCIceCandidate(message.candidate));
           }
         }
-      }
+      });
 
-      function startStream() {
-        navigator.getUserMedia =
-          navigator.getUserMedia ||
-          navigator.webkitGetUserMedia ||
-          navigator.mozGetUserMedia;
-        const videoSource = videoSelect.value;
-        const constraints = {
-          audio: false,
-          video: {
-            mandatory: {
-              maxWidth: 240,
-              maxHeight: 240,
-              minWidth: 240,
-              maxHeight: 240
-            },
-            optional: [
-              {
-                sourceId: videoSource
-              }
-            ]
-          }
+      function startSignaling() {
+        displaySignalMessage("starting signaling...");
+
+        rtcPeerConn = new RTCPeerConnection(configuration);
+
+        // send any ice candidates to the other peer
+        rtcPeerConn.onicecandidate = evt => {
+          if (evt.candidate)
+            io.emit("signal", {
+              type: "icecandidate",
+              message: JSON.stringify({
+                candidate: evt.candidate
+              })
+            });
+          displaySignalMessage("completed that ice candidate...");
         };
 
-        navigator.getUserMedia(constraints, onSuccess, onError);
+        // let the 'negotiationneeded' event trigger offer generation
+        rtcPeerConn.onnegotiationneeded = () => {
+          displaySignalMessage("on negotiation called");
+          debugger;
+          rtcPeerConn.createOffer(sendLocalDesc, logError);
+        };
+        debugger;
+
+        // once remote stream arrives, show it in the remote video element
+        rtcPeerConn.onaddstream = evt => {
+          displaySignalMessage("going to add their stream...");
+          theirVideoArea.srcObject(evt.stream);
+        };
+
+        // get a local stream, show it in your video tag and add it to be sent
+        navigator.getUserMedia(
+          {
+            audio: true,
+            video: true
+          },
+          stream => {
+            displaySignalMessage("going to display my stream...");
+            myVideoArea.srcObject(stream);
+            rtcPeerConn.addStream(stream);
+          },
+          logError
+        );
       }
 
-      function onSuccess(stream) {
-        console.log("Success! We have a stream!");
-        videoArea.srcObject = stream;
-        videoArea.className = "grayscale_filter";
-        videoArea.play();
+      function sendLocalDesc(desc) {
+        debugger;
+        rtcPeerConn.setLocalDescription(desc, () => {
+          displayMessage("sending local description");
+          debugger;
+          socket.emit(
+            "signal",
+            {
+              type: "SDP",
+              message: JSON.stringify({
+                sdp: rtcPeerConn.localDescription
+              }),
+              room: SIGNAL_ROOM
+            },
+            logError
+          );
+        });
       }
 
-      function onError(error) {
-        console.log("Error with getUserMedia", error);
+      function logError(error) {
+        displaySignalMessage(error.name + ": " + error.message);
+      }
+
+      socket.on("announce", data => {
+        displayMessage(data.message);
+      });
+
+      socket.on("message", data => {
+        displayMessage(data.author + ": " + data.message);
+      });
+
+      sendMessage.addEventListener("click", evt => {
+        socket.emit("send", {
+          author: myName.value,
+          message: myMessage.value,
+          room: ROOM
+        });
+      });
+
+      function displayMessage(message) {
+        chatArea.innerHTML = chatArea.innerHTML + "<br />" + message;
+      }
+
+      function displaySignalMessage(message) {
+        signalingArea.innerHTML = signalingArea.innerHTML + "<br />" + message;
       }
     </script>
   </body>
