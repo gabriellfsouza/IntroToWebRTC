@@ -83,7 +83,7 @@
         // send any ice candidates to the other peer
         rtcPeerConn.onicecandidate = evt => {
           if (evt.candidate)
-            io.emit("signal", {
+            socket.emit("signal", {
               type: "icecandidate",
               message: JSON.stringify({
                 candidate: evt.candidate
@@ -107,6 +107,10 @@
         };
 
         // get a local stream, show it in your video tag and add it to be sent
+        navigator.getUserMedia =
+          navigator.getUserMedia ||
+          navigator.webkitGetUserMedia ||
+          navigator.mozGetUserMedia;
         navigator.getUserMedia(
           {
             audio: true,
@@ -124,21 +128,21 @@
 
       function sendLocalDesc(desc) {
         debugger;
-        rtcPeerConn.setLocalDescription(desc, () => {
-          displayMessage("sending local description");
-          debugger;
-          socket.emit(
-            "signal",
-            {
+        rtcPeerConn.setLocalDescription(
+          desc,
+          () => {
+            displayMessage("sending local description");
+            debugger;
+            socket.emit("signal", {
               type: "SDP",
               message: JSON.stringify({
                 sdp: rtcPeerConn.localDescription
               }),
               room: SIGNAL_ROOM
-            },
-            logError
-          );
-        });
+            });
+          },
+          logError
+        );
       }
 
       function logError(error) {
