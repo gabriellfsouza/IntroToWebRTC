@@ -103,7 +103,7 @@
         // once remote stream arrives, show it in the remote video element
         rtcPeerConn.onaddstream = evt => {
           displaySignalMessage("going to add their stream...");
-          theirVideoArea.srcObject(evt.stream);
+          theirVideoArea.srcObject = evt.stream;
         };
 
         // get a local stream, show it in your video tag and add it to be sent
@@ -114,7 +114,8 @@
           },
           stream => {
             displaySignalMessage("going to display my stream...");
-            myVideoArea.srcObject(stream);
+            myVideoArea.srcObject = stream;
+
             rtcPeerConn.addStream(stream);
           },
           logError
