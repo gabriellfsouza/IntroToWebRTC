@@ -13,7 +13,7 @@ app.get('/', function(req, res){
 const server = https.createServer({
   key: fs.readFileSync('server.key'),
   cert: fs.readFileSync('server.cert')
-}, app).listen(3000, () => {
+}, app).listen(process.env.PORT || 3000, () => {
   console.log('Listening...')
 })
 
