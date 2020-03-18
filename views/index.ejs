@@ -36,6 +36,11 @@
         ]
       };
       let rtcPeerConn;
+      const dataChannelOptions = {
+        ordered: false, // no guaranteed delivery, unreliable but faster
+        maxRetransmitTime: 1000 //milliseconds
+      };
+      let dataChannel;
 
       socket = io();
       socket.emit("ready", {
@@ -78,7 +83,14 @@
       function startSignaling() {
         displaySignalMessage("starting signaling...");
 
-        rtcPeerConn = new RTCPeerConnection(configuration);
+        rtcPeerConn = new RTCPeerConnection(configuration, null);
+        dataChannel = rtcPeerConn.createDataChannel(
+          "textMessages",
+          dataChannelOptions
+        );
+
+        dataChannel.onopen = dataChannelStateChanged;
+        rtcPeerConn.ondatachannel = receiveDataChannel;
 
         // send any ice candidates to the other peer
         rtcPeerConn.onicecandidate = evt => {
@@ -95,10 +107,9 @@
         // let the 'negotiationneeded' event trigger offer generation
         rtcPeerConn.onnegotiationneeded = () => {
           displaySignalMessage("on negotiation called");
-          debugger;
+
           rtcPeerConn.createOffer(sendLocalDesc, logError);
         };
-        debugger;
 
         // once remote stream arrives, show it in the remote video element
         rtcPeerConn.onaddstream = evt => {
@@ -113,8 +124,15 @@
           navigator.mozGetUserMedia;
         navigator.getUserMedia(
           {
-            audio: true,
-            video: true
+            audio: false,
+            video: {
+              mandatory: {
+                minWidth: 320,
+                maxWidth: 320,
+                minHeight: 180,
+                maxHeight: 180
+              }
+            }
           },
           stream => {
             displaySignalMessage("going to display my stream...");
@@ -126,13 +144,30 @@
         );
       }
 
+      function dataChannelStateChanged() {
+        if (dataChannel.readyState === "open") {
+          displaySignalMessage("Data Channel open");
+          dataChannel.onmessage = receiveDataChannelMessage;
+        }
+      }
+
+      function receiveDataChannel(event) {
+        displaySignalMessage("Receiving a data channel");
+        dataChannel = event.channel;
+        dataChannel.onmessage = receiveDataChannelMessage;
+      }
+
+      function receiveDataChannelMessage(event) {
+        displaySignalMessage("Incoming Message");
+        displayMessage("From DataChannel: " + event.data);
+      }
+
       function sendLocalDesc(desc) {
-        debugger;
         rtcPeerConn.setLocalDescription(
           desc,
           () => {
             displayMessage("sending local description");
-            debugger;
+
             socket.emit("signal", {
               type: "SDP",
               message: JSON.stringify({
@@ -157,14 +192,6 @@
         displayMessage(data.author + ": " + data.message);
       });
 
-      sendMessage.addEventListener("click", evt => {
-        socket.emit("send", {
-          author: myName.value,
-          message: myMessage.value,
-          room: ROOM
-        });
-      });
-
       function displayMessage(message) {
         chatArea.innerHTML = chatArea.innerHTML + "<br />" + message;
       }
@@ -172,6 +199,22 @@
       function displaySignalMessage(message) {
         signalingArea.innerHTML = signalingArea.innerHTML + "<br />" + message;
       }
+
+      sendMessage.addEventListener(
+        "click",
+        evt => {
+          socket.emit("send", {
+            author: myName.value,
+            message: myMessage.value,
+            room: ROOM
+          });
+
+          dataChannel.send(myName.value + " says " + myMessage.value);
+
+          evt.preventDefault();
+        },
+        false
+      );
     </script>
   </body>
 </html>
