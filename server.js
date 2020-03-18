@@ -10,6 +10,10 @@ app.get('/', function(req, res){
 	res.render('index.ejs');
 });
 
+app.get('/screen', function(req, res){
+	res.render('screen.ejs');
+});
+
 
 const server = https.createServer({
   key: fs.readFileSync('server.key'),
