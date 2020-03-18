@@ -3,13 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>O'Reilly Introduction to WebRTC</title>
+    <title>WebRTC - OPME</title>
     <link rel="stylesheet" type="text/css" href="styles.css" />
     <script src="/socket.io/socket.io.js"></script>
   </head>
   <body>
     <video id="myVideoTag" autoplay></video>
     <video id="theirVideoTag" autoplay></video>
+    <div>
+      <input type="file" id="sendFile" /><br />
+      <progress id="fileProgress" value="1" max="100"></progress>
+      <a id="receivedFileLink"></a>
+      <hr />
+    </div>
+
     <div>
       <label>Your name</label><input id="myName" type="text" />
       <label>Message</label><input id="myMessage" type="text" />
@@ -26,8 +33,13 @@
       const sendMessage = document.querySelector("#sendMessage");
       const chatArea = document.querySelector("#chatArea");
       const signalingArea = document.querySelector("#signalingArea");
+      const sendFile = document.querySelector("input#sendFile");
+      const fileProgress = document.querySelector("progress#fileProgress");
+      const downloadLink = document.querySelector("a#receivedFileLink");
+
       const ROOM = "chat";
       const SIGNAL_ROOM = "signal_room";
+      const FILES_ROOM = "files";
       const configuration = {
         iceServers: [
           {
@@ -41,11 +53,16 @@
         maxRetransmitTime: 1000 //milliseconds
       };
       let dataChannel;
+      let receivedFileName;
+      let receivedFileSize;
+      let fileBuffer = [];
+      let fileSize = 0;
 
       socket = io();
       socket.emit("ready", {
         chat_room: ROOM,
-        signal_room: SIGNAL_ROOM
+        signal_room: SIGNAL_ROOM,
+        files_room: FILES_ROOM
       });
 
       // Send a first signaling message to anyone listening
@@ -78,6 +95,19 @@
             rtcPeerConn.addIceCandidate(new RTCIceCandidate(message.candidate));
           }
         }
+      });
+
+      socket.on("files", data => {
+        receivedFileName = data.filename;
+        receivedFileSize = data.filesize;
+
+        displaySignalMessage(
+          "websockets says the file on it's way is " +
+            receivedFileName +
+            " (" +
+            `${receivedFileSize}` +
+            ")"
+        );
       });
 
       function startSignaling() {
@@ -160,6 +190,23 @@
       function receiveDataChannelMessage(event) {
         displaySignalMessage("Incoming Message");
         displayMessage("From DataChannel: " + event.data);
+
+        // this is where we process incoming files
+        fileBuffer.push(event.data);
+        fileSize += event.data.byteLength;
+        fileProgress.value = fileSize;
+
+        //Provide link to downloadable file when complete
+        if (fileSize === receivedFileSize) {
+          debugger;
+          const received = new Blob(fileBuffer);
+          fileBuffer = [];
+          downloadLink.href = URL.createObjectURL(received);
+          downloadLink.download = receivedFileName;
+          downloadLink.appendChild(
+            document.createTextNode(`${receivedFileName} (${fileSize} bytes)`)
+          );
+        }
       }
 
       function sendLocalDesc(desc) {
@@ -209,9 +256,45 @@
             room: ROOM
           });
 
-          dataChannel.send(myName.value + " says " + myMessage.value);
+          // dataChannel.send(myName.value + " says " + myMessage.value);
 
           evt.preventDefault();
+        },
+        false
+      );
+
+      sendFile.addEventListener(
+        "change",
+        evt => {
+          const file = sendFile.files[0];
+          debugger;
+          displaySignalMessage(`sending file ${file.name} (${file.size})...`);
+          socket.emit("files", {
+            filename: file.name,
+            filesize: file.size,
+            room: FILES_ROOM
+          });
+
+          fileProgress.max = file.size;
+          const chunkSize = 16384;
+          const sliceFile = offset => {
+            const reader = new FileReader();
+            // event when the reader emit the load event
+            reader.onload = (() => {
+              return e => {
+                // chunk send
+                dataChannel.send(e.target.result);
+                if (file.size > offset + e.target.result.byteLength) {
+                  // file progress
+                  setTimeout(sliceFile, 0, offset + chunkSize);
+                }
+                fileProgress.value = offset + e.target.result.byteLength;
+              };
+            })(file);
+            const slice = file.slice(offset, offset + chunkSize);
+            reader.readAsArrayBuffer(slice);
+          };
+          sliceFile(0);
         },
         false
       );

@@ -30,6 +30,7 @@ io.on('connection',socket=>{
   socket.on('ready',(data)=>{
     socket.join(data.chat_room);
     socket.join(data.signal_room);
+    socket.join(data.files_room);
     // io.to(data.chat_room).emit('announce',{
     //   message: 'New client in the ' + data.chat_room + ' room.'
     // });
@@ -49,6 +50,13 @@ io.on('connection',socket=>{
     socket.to(data.room).emit('signaling_message',{
       type: data.type,
       message: data.message
+    })
+  })
+
+  socket.on('files',data=>{
+    socket.to(data.room).emit('files',{
+      filename: data.filename,
+      filesize: data.filesize
     })
   })
 })
