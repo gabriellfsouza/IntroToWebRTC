@@ -3,141 +3,301 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>O'Reilly Introduction to WebRTC</title>
+    <title>WebRTC - OPME</title>
     <link rel="stylesheet" type="text/css" href="styles.css" />
+    <script src="/socket.io/socket.io.js"></script>
   </head>
   <body>
+    <video id="myVideoTag" autoplay></video>
+    <video id="theirVideoTag" autoplay></video>
     <div>
-      Video:
-      <select id="camera"></select>
+      <input type="file" id="sendFile" /><br />
+      <progress id="fileProgress" value="1" max="100"></progress>
+      <a id="receivedFileLink"></a>
+      <hr />
     </div>
-    <p>
-      <button id="takeProfilePicture" type="button" autofocus="true">
-        Create Profile Picture
-      </button>
-    </p>
-    <video id="videoTag" autoplay></video>
-    <canvas id="profilePicCanvas" style="display: none;"> </canvas>
+
     <div>
-      <img id="profilePictureOutput" />
+      <label>Your name</label><input id="myName" type="text" />
+      <label>Message</label><input id="myMessage" type="text" />
+      <input id="sendMessage" type="submit" />
+      <div id="chatArea">Message Output:<br /></div>
+      <div id="signalingArea">Signaling Messages: <br /></div>
     </div>
 
     <script>
-      const videoArea = document.querySelector("video");
-      const videoSelect = document.querySelector("#camera");
-      const profilePicCanvas = document.querySelector("#profilePicCanvas");
-      const profilePictureOutput = document.querySelector(
-        "#profilePictureOutput"
-      );
-      const takePicButton = document.querySelector("#takeProfilePicture");
-      const videoTag = document.querySelector("#videoTag");
+      const myVideoArea = document.querySelector("#myVideoTag");
+      const theirVideoArea = document.querySelector("#theirVideoTag");
+      const myName = document.querySelector("#myName");
+      const myMessage = document.querySelector("#myMessage");
+      const sendMessage = document.querySelector("#sendMessage");
+      const chatArea = document.querySelector("#chatArea");
+      const signalingArea = document.querySelector("#signalingArea");
+      const sendFile = document.querySelector("input#sendFile");
+      const fileProgress = document.querySelector("progress#fileProgress");
+      const downloadLink = document.querySelector("a#receivedFileLink");
 
-      const width = 240; //Desired width of the profile picture
-      let height = 0; //Calculated later based on image ratio;
-      let streaming = false; //Used to determine when the video has loaded
-
-      takePicButton.addEventListener(
-        "click",
-        ev => {
-          takeProfilePic();
-          ev.preventDefault();
-        },
-        false
-      );
-
-      videoTag.addEventListener(
-        "canplay",
-        ev => {
-          if (!streaming) {
-            height = videoTag.videoHeight / (videoTag.videoWidth / width);
-
-            // Firefox currently has a bug here the height can't be read from
-            // the video, so we will make assumptions if this happnes
-
-            if (isNaN(height)) {
-              height = width / (4 / 3);
-            }
-
-            videoTag.setAttribute("width", width);
-            videoTag.setAttribute("height", height);
-            profilePicCanvas.setAttribute("width", width);
-            profilePicCanvas.setAttribute("height", height);
-            streaming = true;
+      const ROOM = "chat";
+      const SIGNAL_ROOM = "signal_room";
+      const FILES_ROOM = "files";
+      const configuration = {
+        iceServers: [
+          {
+            url: "stun:stun.l.google.19302"
           }
-        },
-        false
-      );
+        ]
+      };
+      let rtcPeerConn;
+      const dataChannelOptions = {
+        ordered: false, // no guaranteed delivery, unreliable but faster
+        maxRetransmitTime: 1000 //milliseconds
+      };
+      let dataChannel;
+      let receivedFileName;
+      let receivedFileSize;
+      let fileBuffer = [];
+      let fileSize = 0;
 
-      function takeProfilePic() {
-        const context = profilePicCanvas.getContext("2d");
-        if (width && height) {
-          profilePicCanvas.width = width;
-          profilePicCanvas.height = height;
+      socket = io();
+      socket.emit("ready", {
+        chat_room: ROOM,
+        signal_room: SIGNAL_ROOM,
+        files_room: FILES_ROOM
+      });
 
-          context.drawImage(videoTag, 0, 0, width, height);
+      // Send a first signaling message to anyone listening
+      // This normally would be on a button click
+      socket.emit("signal", {
+        type: "user_here",
+        message: "Are you ready for a call?",
+        room: SIGNAL_ROOM
+      });
 
-          const data = profilePicCanvas.toDataURL("image/png");
-          debugger;
-          profilePictureOutput.setAttribute("src", data);
-        }
-      }
+      socket.on("signaling_message", data => {
+        displaySignalMessage("Signal received: " + data.type);
 
-      navigator.mediaDevices.enumerateDevices().then(getCameras);
-      videoSelect.onchange = startStream;
-      startStream();
+        //Setup the RTC Peer Connection object
+        if (!rtcPeerConn) startSignaling();
 
-      function getCameras(sourceInfos) {
-        debugger;
-        for (let i = 0; i !== sourceInfos.length; ++i) {
-          const sourceInfo = sourceInfos[i];
-          const option = document.createElement("option");
-          option.value = sourceInfo.deviceId;
-
-          if (sourceInfo.kind === "video" || sourceInfo.kind === "videoinput") {
-            option.text =
-              sourceInfo.label || "camera " + (videoSelect.length + 1);
-            // alert(sourceInfo.deviceId);
-            videoSelect.appendChild(option);
+        if (data.type !== "user_here") {
+          const message = JSON.parse(data.message);
+          if (message.sdp) {
+            rtcPeerConn.setRemoteDescription(
+              new RTCSessionDescription(message.sdp),
+              () => {
+                //if we received an offer, we need to answer
+                if (rtcPeerConn.remoteDescription.type === "offer")
+                  rtcPeerConn.createAnswer(sendLocalDesc, logError);
+              },
+              logError
+            );
+          } else {
+            rtcPeerConn.addIceCandidate(new RTCIceCandidate(message.candidate));
           }
         }
-      }
+      });
 
-      function startStream() {
+      socket.on("files", data => {
+        receivedFileName = data.filename;
+        receivedFileSize = data.filesize;
+
+        displaySignalMessage(
+          "websockets says the file on it's way is " +
+            receivedFileName +
+            " (" +
+            `${receivedFileSize}` +
+            ")"
+        );
+      });
+
+      function startSignaling() {
+        displaySignalMessage("starting signaling...");
+
+        rtcPeerConn = new RTCPeerConnection(configuration, null);
+        dataChannel = rtcPeerConn.createDataChannel(
+          "textMessages",
+          dataChannelOptions
+        );
+
+        dataChannel.onopen = dataChannelStateChanged;
+        rtcPeerConn.ondatachannel = receiveDataChannel;
+
+        // send any ice candidates to the other peer
+        rtcPeerConn.onicecandidate = evt => {
+          if (evt.candidate)
+            socket.emit("signal", {
+              type: "icecandidate",
+              message: JSON.stringify({
+                candidate: evt.candidate
+              })
+            });
+          displaySignalMessage("completed that ice candidate...");
+        };
+
+        // let the 'negotiationneeded' event trigger offer generation
+        rtcPeerConn.onnegotiationneeded = () => {
+          displaySignalMessage("on negotiation called");
+
+          rtcPeerConn.createOffer(sendLocalDesc, logError);
+        };
+
+        // once remote stream arrives, show it in the remote video element
+        rtcPeerConn.onaddstream = evt => {
+          displaySignalMessage("going to add their stream...");
+          theirVideoArea.srcObject = evt.stream;
+        };
+
+        // get a local stream, show it in your video tag and add it to be sent
         navigator.getUserMedia =
           navigator.getUserMedia ||
           navigator.webkitGetUserMedia ||
           navigator.mozGetUserMedia;
-        const videoSource = videoSelect.value;
-        const constraints = {
-          audio: false,
-          video: {
-            mandatory: {
-              maxWidth: 240,
-              maxHeight: 240,
-              minWidth: 240,
-              maxHeight: 240
-            },
-            optional: [
-              {
-                sourceId: videoSource
+        navigator.getUserMedia(
+          {
+            audio: false,
+            video: {
+              mandatory: {
+                minWidth: 320,
+                maxWidth: 320,
+                minHeight: 180,
+                maxHeight: 180
               }
-            ]
-          }
-        };
+            }
+          },
+          stream => {
+            displaySignalMessage("going to display my stream...");
+            myVideoArea.srcObject = stream;
 
-        navigator.getUserMedia(constraints, onSuccess, onError);
+            rtcPeerConn.addStream(stream);
+          },
+          logError
+        );
       }
 
-      function onSuccess(stream) {
-        console.log("Success! We have a stream!");
-        videoArea.srcObject = stream;
-        videoArea.className = "grayscale_filter";
-        videoArea.play();
+      function dataChannelStateChanged() {
+        if (dataChannel.readyState === "open") {
+          displaySignalMessage("Data Channel open");
+          dataChannel.onmessage = receiveDataChannelMessage;
+        }
       }
 
-      function onError(error) {
-        console.log("Error with getUserMedia", error);
+      function receiveDataChannel(event) {
+        displaySignalMessage("Receiving a data channel");
+        dataChannel = event.channel;
+        dataChannel.onmessage = receiveDataChannelMessage;
       }
+
+      function receiveDataChannelMessage(event) {
+        displaySignalMessage("Incoming Message");
+        displayMessage("From DataChannel: " + event.data);
+
+        // this is where we process incoming files
+        fileBuffer.push(event.data);
+        fileSize += event.data.byteLength;
+        fileProgress.value = fileSize;
+
+        //Provide link to downloadable file when complete
+        if (fileSize === receivedFileSize) {
+          debugger;
+          const received = new Blob(fileBuffer);
+          fileBuffer = [];
+          downloadLink.href = URL.createObjectURL(received);
+          downloadLink.download = receivedFileName;
+          downloadLink.appendChild(
+            document.createTextNode(`${receivedFileName} (${fileSize} bytes)`)
+          );
+        }
+      }
+
+      function sendLocalDesc(desc) {
+        rtcPeerConn.setLocalDescription(
+          desc,
+          () => {
+            displayMessage("sending local description");
+
+            socket.emit("signal", {
+              type: "SDP",
+              message: JSON.stringify({
+                sdp: rtcPeerConn.localDescription
+              }),
+              room: SIGNAL_ROOM
+            });
+          },
+          logError
+        );
+      }
+
+      function logError(error) {
+        displaySignalMessage(error.name + ": " + error.message);
+      }
+
+      socket.on("announce", data => {
+        displayMessage(data.message);
+      });
+
+      socket.on("message", data => {
+        displayMessage(data.author + ": " + data.message);
+      });
+
+      function displayMessage(message) {
+        chatArea.innerHTML = chatArea.innerHTML + "<br />" + message;
+      }
+
+      function displaySignalMessage(message) {
+        signalingArea.innerHTML = signalingArea.innerHTML + "<br />" + message;
+      }
+
+      sendMessage.addEventListener(
+        "click",
+        evt => {
+          socket.emit("send", {
+            author: myName.value,
+            message: myMessage.value,
+            room: ROOM
+          });
+
+          // dataChannel.send(myName.value + " says " + myMessage.value);
+
+          evt.preventDefault();
+        },
+        false
+      );
+
+      sendFile.addEventListener(
+        "change",
+        evt => {
+          const file = sendFile.files[0];
+          debugger;
+          displaySignalMessage(`sending file ${file.name} (${file.size})...`);
+          socket.emit("files", {
+            filename: file.name,
+            filesize: file.size,
+            room: FILES_ROOM
+          });
+
+          fileProgress.max = file.size;
+          const chunkSize = 16384;
+          const sliceFile = offset => {
+            const reader = new FileReader();
+            // event when the reader emit the load event
+            reader.onload = (() => {
+              return e => {
+                // chunk send
+                dataChannel.send(e.target.result);
+                if (file.size > offset + e.target.result.byteLength) {
+                  // file progress
+                  setTimeout(sliceFile, 0, offset + chunkSize);
+                }
+                fileProgress.value = offset + e.target.result.byteLength;
+              };
+            })(file);
+            const slice = file.slice(offset, offset + chunkSize);
+            reader.readAsArrayBuffer(slice);
+          };
+          sliceFile(0);
+        },
+        false
+      );
     </script>
   </body>
 </html>
