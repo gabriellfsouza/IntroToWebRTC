@@ -1,5 +1,5 @@
-const https = require('https');
-// const http = require('http');
+// const https = require('https');
+const http = require('http');
 const fs = require('fs');
 const express = require('express');
 const app = express();
@@ -15,16 +15,16 @@ app.get('/screen', function(req, res){
 });
 
 
-const server = https.createServer({
-  key: fs.readFileSync('server.key'),
-  cert: fs.readFileSync('server.cert')
-}, app).listen(process.env.PORT || 3000, () => {
-  console.log('Listening...')
-})
-
-// const server = http.createServer(app).listen(process.env.PORT || 3000, () => {
+// const server = https.createServer({
+//   key: fs.readFileSync('server.key'),
+//   cert: fs.readFileSync('server.cert')
+// }, app).listen(process.env.PORT || 3000, () => {
 //   console.log('Listening...')
 // })
+
+const server = http.createServer(app).listen(process.env.PORT || 3000, () => {
+  console.log('Listening...')
+})
 
 const io = require('socket.io')(server);
 
